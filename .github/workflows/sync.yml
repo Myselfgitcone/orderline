@@ -1,0 +1,44 @@
+name: sync
+
+# Every 6 hours: run the shop forward to now, then drain the replication slot
+# through Debezium into the Databricks volume.
+on:
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+
+# Two syncs must never share the slot.
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ORDERLINE_DATABASE_URL: ${{ secrets.ORDERLINE_DATABASE_URL }}
+      ORDERLINE_DATABRICKS_HOST: ${{ secrets.ORDERLINE_DATABRICKS_HOST }}
+      ORDERLINE_DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
+    steps:
+      - name: Check secrets
+        id: secrets
+        run: |
+          if [ -z "$ORDERLINE_DATABASE_URL" ] || [ -z "$ORDERLINE_DATABRICKS_TOKEN" ]; then
+            echo "::warning title=Not configured::Set ORDERLINE_DATABASE_URL, ORDERLINE_DATABRICKS_HOST and ORDERLINE_DATABRICKS_TOKEN."
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == '1'
+      - uses: astral-sh/setup-uv@v6
+        if: steps.secrets.outputs.ready == '1'
+        with:
+          python-version: "3.12"
+      - if: steps.secrets.outputs.ready == '1'
+        run: |
+          uv sync --frozen
+          uv run orderline setup
+          uv run orderline tick
+          uv run orderline sync

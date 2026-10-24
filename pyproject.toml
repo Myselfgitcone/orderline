@@ -6,9 +6,12 @@ readme = "README.md"
 authors = [{ name = "Jagadish Butukuri", email = "jagadishbutukuri11@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.27",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
+    "starlette>=0.40",
     "typer>=0.12",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -16,6 +19,7 @@ orderline = "orderline.cli:app"
 
 [dependency-groups]
 dev = [
+    "httpx2>=0.1",  # starlette's TestClient
     "pytest>=8.3",
     "ruff>=0.8",
 ]
