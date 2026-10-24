@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A service container can't take server flags, and CDC needs wal_level=logical.
+      - name: Start Postgres with logical replication
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust \
+            postgres:16 -c wal_level=logical -c max_replication_slots=20
+          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pytest -q
+        env:
+          ORDERLINE_TEST_DSN: postgresql://postgres@localhost:5432/postgres
