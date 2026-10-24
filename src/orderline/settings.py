@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,3 +14,13 @@ class Settings(BaseSettings):
     publication: str = "orderline"
     slot: str = "orderline"
     seed: int = 7
+
+    # Capture
+    debezium_image: str = "quay.io/debezium/server:3.6.2.Final"
+    receiver_port: int = 8089
+    spool_dir: Path = Path("out/spool")
+
+    # Databricks
+    databricks_host: str = ""
+    databricks_token: SecretStr = SecretStr("")
+    volume: str = "/Volumes/orderline/raw/cdc"

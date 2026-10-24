@@ -3,7 +3,7 @@
 Change data capture from a live order database into Databricks, with a
 late-delivery model trained on the result.
 
-Work in progress. What's here so far is the source side: the shop.
+Work in progress. Done so far: the shop, and capture into Databricks.
 
 ## The shop
 
@@ -63,6 +63,46 @@ uv run orderline stats
 
 The slot is created before any data, so the first sync streams every row as an
 insert and needs no snapshot.
+
+## Capture
+
+```
+Neon Postgres --(replication slot, pgoutput)--> Debezium Server --(HTTP, batches of 500)-->
+    receiver --> JSONL per table --> Databricks Files API --> /Volumes/orderline/raw/cdc/<table>/
+```
+
+Databricks Free Edition can only reach a short list of trusted domains, so it
+can't pull from Postgres. The sync runs in GitHub Actions every 6 hours and
+pushes into a Unity Catalog volume instead.
+
+One sync, in order:
+
+1. Start Debezium Server in Docker. It has no stored offset, so it resumes from
+   the slot's confirmed position. The slot is the only bookmark.
+2. Write a marker into the WAL with `pg_logical_emit_message`. It's transactional,
+   so when it reaches the receiver, everything committed before it has too.
+3. Upload the batch to the volume.
+4. Only now stop Debezium gracefully. It commits its offset, which confirms the
+   LSN to the slot.
+
+If anything fails before step 4, the container is killed instead, the slot
+doesn't move, and the next sync sends the same changes again. Delivery is
+at-least-once; silver de-duplicates on LSN.
+
+The receiver writes each event exactly as Debezium sent it and fsyncs before
+answering, so an HTTP 200 means the event is on disk.
+
+```bash
+uv run orderline sync               # needs Docker, plus ORDERLINE_DATABRICKS_HOST and _TOKEN
+uv run orderline sync --no-upload   # keep the batch in out/spool
+uv run orderline verify             # replay out/spool and compare with the source tables
+```
+
+`verify` applies every captured event in LSN order and checks the result matches
+each source table row for row. CI runs the whole path twice against Postgres 17
+with real Debezium, then verifies both batches together with
+`--no-allow-duplicates`, which proves the second sync started exactly where the
+first one stopped.
 
 ## Tests
 

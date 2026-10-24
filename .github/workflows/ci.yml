@@ -15,7 +15,7 @@ jobs:
       - name: Start Postgres with logical replication
         run: |
           docker run -d --name pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust \
-            postgres:16 -c wal_level=logical -c max_replication_slots=20
+            postgres:17 -c wal_level=logical -c max_replication_slots=20
           for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
 
       - uses: astral-sh/setup-uv@v6
@@ -27,3 +27,34 @@ jobs:
       - run: uv run pytest -q
         env:
           ORDERLINE_TEST_DSN: postgresql://postgres@localhost:5432/postgres
+
+  # The real thing, minus Databricks: Postgres -> Debezium Server -> receiver,
+  # twice, then replay every captured event and compare with the source tables.
+  capture:
+    runs-on: ubuntu-latest
+    env:
+      ORDERLINE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Postgres with logical replication
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
+            postgres:17 -c wal_level=logical
+          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: docker pull -q "$(uv run python -c 'from orderline.settings import Settings; print(Settings().debezium_image)')"
+
+      - run: uv run orderline setup
+      - run: uv run orderline tick --until 2026-10-20T00:00:00 --backfill-days 2
+      - name: First sync
+        run: uv run orderline sync --no-upload --timeout 300
+      - run: uv run orderline verify
+
+      - run: uv run orderline tick --until 2026-10-20T18:00:00
+      - name: Second sync picks up only what's new
+        run: uv run orderline sync --no-upload --timeout 300
+      # Both batches together must rebuild the tables, with nothing sent twice.
+      - run: uv run orderline verify --no-allow-duplicates
