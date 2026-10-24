@@ -37,6 +37,19 @@ def build_app(spool: Spool) -> Starlette:
     return Starlette(routes=[Route("/events", events, methods=["POST"]), Route("/health", health)])
 
 
+class _QuietUpgrades(logging.Filter):
+    """Java's HttpClient asks every plain-HTTP request to upgrade to HTTP/2 (h2c).
+    Uvicorn declines, which is fine, but it warns twice per request about it."""
+
+    NOISE = ("Unsupported upgrade request", "No supported WebSocket library")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(self.NOISE)
+
+
+logging.getLogger("uvicorn.error").addFilter(_QuietUpgrades())
+
+
 class Receiver:
     """Runs the endpoint on a background thread for the length of a `with` block."""
 

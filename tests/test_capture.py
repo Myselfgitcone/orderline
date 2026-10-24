@@ -180,3 +180,36 @@ def test_receiver_runs_on_a_real_socket(tmp_path):
         )
     assert response.status_code == 200
     assert spool.counts["orders"] == 1
+
+
+def test_lsn_round_trip():
+    from orderline.sync import format_lsn, parse_lsn
+
+    assert parse_lsn("0/16A51E8") == 0x16A51E8
+    assert parse_lsn("1/0") == 1 << 32
+    assert format_lsn(parse_lsn("2A/FF00")) == "2A/FF00"
+
+
+def test_spool_tracks_the_last_data_lsn_but_not_markers(tmp_path):
+    spool = Spool(tmp_path, "r")
+    spool.add(
+        [event("orders", "c", 50, after={"order_id": 1}), event("orders", "u", 70, after={"order_id": 1})]
+    )
+    spool.add([marker("r") | {"source": {"lsn": 99}}])
+    assert spool.max_lsn == 70
+
+
+def test_h2c_upgrade_requests_dont_spam_the_log(tmp_path, capfd):
+    spool = Spool(tmp_path, "r")
+    with Receiver(spool, port=8098):
+        # What Java's HttpClient sends on plain HTTP.
+        headers = {
+            "Connection": "Upgrade, HTTP2-Settings",
+            "Upgrade": "h2c",
+            "HTTP2-Settings": "AAEAAEAAAAIAAAAA",
+        }
+        for _ in range(3):
+            response = httpx.post("http://127.0.0.1:8098/events", json=[], headers=headers)
+            assert response.status_code == 200
+    out, err = capfd.readouterr()
+    assert "Unsupported upgrade request" not in out + err

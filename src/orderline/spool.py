@@ -28,6 +28,7 @@ class Spool:
         self.ops: Counter[str] = Counter()
         self.markers: set[str] = set()
         self.last_event_at: float | None = None
+        self.max_lsn = 0  # highest data-change LSN seen; markers don't count
         self._open: dict[str, tuple[TextIO, Path, int]] = {}
         self._parts: Counter[str] = Counter()
         self._done: list[Path] = []
@@ -51,6 +52,7 @@ class Spool:
                 self._bump(table)
                 touched.add(table)
                 self.counts[table] += 1
+                self.max_lsn = max(self.max_lsn, (event.get("source") or {}).get("lsn") or 0)
                 self.ops[event.get("op", "?")] += 1
             # Durable before the HTTP 200 goes back, which is what lets
             # Debezium count these events as delivered.

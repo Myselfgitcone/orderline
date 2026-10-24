@@ -33,6 +33,7 @@ class SyncReport:
     files: list[Path] = field(default_factory=list)
     uploaded: list[str] = field(default_factory=list)
     marker_lsn: str = ""
+    last_data_lsn: str = ""
     confirmed_lsn: str = ""
     slot_advanced: bool = False
     seconds: float = 0.0
@@ -45,10 +46,11 @@ class SyncReport:
             if self.uploaded
             else f"kept {len(self.files)} files locally"
         )
-        slot = "slot confirmed" if self.slot_advanced else "slot NOT confirmed (next sync resends)"
+        slot = "confirmed" if self.slot_advanced else "NOT confirmed (next sync resends)"
         return (
             f"Sync {self.run_id}: {sum(self.counts.values())} events ({tables}; {ops}); {where}; "
-            f"marker {self.marker_lsn}, {slot} at {self.confirmed_lsn}; {self.seconds:.0f}s."
+            f"last change {self.last_data_lsn or 'none'}, slot {slot} at {self.confirmed_lsn}; "
+            f"{self.seconds:.0f}s."
         )
 
 
@@ -102,7 +104,8 @@ def run(conn: psycopg.Connection, settings: Settings, upload: bool, timeout_s: f
         debezium.stop(container)
 
     report.counts, report.ops = spool.counts, spool.ops
-    report.confirmed_lsn, report.slot_advanced = _confirmed(conn, settings.slot, report.marker_lsn)
+    report.last_data_lsn = format_lsn(spool.max_lsn) if spool.max_lsn else ""
+    report.confirmed_lsn, report.slot_advanced = _confirmed(conn, settings.slot, spool.max_lsn)
     report.seconds = time.monotonic() - started
     return report
 
@@ -117,15 +120,29 @@ def _wait_for(spool: Spool, run_id: str, container: str, timeout_s: float) -> No
         time.sleep(0.5)
 
 
-def _confirmed(conn: psycopg.Connection, slot: str, marker_lsn: str) -> tuple[str, bool]:
-    """The slot's confirmed LSN once Debezium has let go of it."""
+def parse_lsn(text: str) -> int:
+    """'0/16A51E8' -> the same 64-bit number Debezium puts in source.lsn."""
+    high, low = text.split("/")
+    return (int(high, 16) << 32) + int(low, 16)
+
+
+def format_lsn(value: int) -> str:
+    return f"{value >> 32:X}/{value & 0xFFFFFFFF:X}"
+
+
+def _confirmed(conn: psycopg.Connection, slot: str, last_change: int) -> tuple[str, bool]:
+    """Whether the slot, once Debezium lets go of it, is past every change we captured.
+
+    Compared with the last data change rather than the marker: Debezium confirms
+    up to the last transaction it fully handed over, which can stop just short of
+    the marker's own (empty) transaction. Resending that costs nothing.
+    """
     for _ in range(30):
-        row = conn.execute(
-            "select active, confirmed_flush_lsn::text, confirmed_flush_lsn >= %s::pg_lsn "
-            "from pg_replication_slots where slot_name = %s",
-            (marker_lsn, slot),
+        active, confirmed = conn.execute(
+            "select active, confirmed_flush_lsn::text from pg_replication_slots where slot_name = %s",
+            (slot,),
         ).fetchone()
-        if not row[0]:
-            return row[1], row[2]
+        if not active:
+            break
         time.sleep(1)
-    return row[1], row[2]
+    return confirmed, parse_lsn(confirmed) >= last_change
