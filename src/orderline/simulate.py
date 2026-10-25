@@ -364,7 +364,13 @@ class Shop:
                 self._schedule(writes, order_id, "pay", pay_at)
 
     def _churn(self, hour, rng, writes) -> None:
-        """Customers move and change emails; prices drift; products come and go."""
+        """Customers move and change emails; prices drift; products come and go.
+
+        These run after the hour's orders, so they're stamped at its last moment:
+        stamping them at the top of the hour let a customer's updated_at go
+        backwards when a payment earlier in the same hour had already bumped it.
+        """
+        at = hour + HOUR - timedelta(microseconds=1)
         if rng.random() < 0.05:
             customer = rng.choice(self.customers)
             city = self._pick_city(rng)
@@ -373,7 +379,7 @@ class Shop:
                 (
                     "update shop.customers set city = %s, state = %s, lat = %s, lon = %s, updated_at = %s "
                     "where customer_id = %s",
-                    (city.city, city.state, customer.lat, customer.lon, hour, customer.customer_id),
+                    (city.city, city.state, customer.lat, customer.lon, at, customer.customer_id),
                 )
             )
         if rng.random() < 0.03:
@@ -382,7 +388,7 @@ class Shop:
             writes.append(
                 (
                     "update shop.customers set email = %s, updated_at = %s where customer_id = %s",
-                    (email, hour, customer.customer_id),
+                    (email, at, customer.customer_id),
                 )
             )
         if rng.random() < 0.1:
@@ -392,7 +398,7 @@ class Shop:
             writes.append(
                 (
                     "update shop.products set price_cents = %s, updated_at = %s where product_id = %s",
-                    (product.price_cents, hour, product.product_id),
+                    (product.price_cents, at, product.product_id),
                 )
             )
         if rng.random() < 0.004 and len(self.products) > 60:
@@ -400,7 +406,7 @@ class Shop:
             writes.append(
                 (
                     "update shop.products set active = false, updated_at = %s where product_id = %s",
-                    (hour, product.product_id),
+                    (at, product.product_id),
                 )
             )
         if rng.random() < 0.006:
@@ -415,7 +421,7 @@ class Shop:
             row = self.conn.execute(
                 "insert into shop.products (sku, name, category, price_cents, weight_g, updated_at) "
                 "values (%s, %s, %s, %s, %s, %s) returning product_id",
-                (product.sku, product.name, product.category, product.price_cents, product.weight_g, hour),
+                (product.sku, product.name, product.category, product.price_cents, product.weight_g, at),
             ).fetchone()
             product.product_id = row[0]
             self.products.append(product)

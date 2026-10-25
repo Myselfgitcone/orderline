@@ -4,12 +4,17 @@
 -- The schemas are spelled out rather than inferred. Debezium's JSON has no type
 -- information (schemas.enable=false), so inference would guess: dates arrive as
 -- days since 1970 and timestamps as ISO strings. The whole envelope is declared,
--- so _rescued_data stays empty unless Debezium or the shop's tables change shape,
--- and the expectation below shows it the moment they do.
+-- so nothing real lands in _rescued_data unless Debezium or the shop's tables
+-- change shape, and the expectation below shows it the moment they do.
 
 CREATE OR REFRESH STREAMING TABLE bronze.orders (
   CONSTRAINT has_position EXPECT (source.lsn IS NOT NULL),
-  CONSTRAINT nothing_rescued EXPECT (_rescued_data IS NULL)
+  -- Auto Loader leaves an empty {} for a struct even when every field parsed;
+  -- only a key with actual content means Debezium sent something unexpected.
+  CONSTRAINT nothing_rescued EXPECT (
+    _rescued_data IS NULL OR size(filter(json_object_keys(_rescued_data),
+      k -> k <> '_file_path' AND get_json_object(_rescued_data, concat('$.', k)) <> '{}')) = 0
+  )
 )
 COMMENT 'Change events for shop.orders, as captured by Debezium.'
 AS SELECT *, _metadata.file_path AS source_file, _metadata.file_modification_time AS landed_at
@@ -35,7 +40,12 @@ FROM STREAM read_files(
 
 CREATE OR REFRESH STREAMING TABLE bronze.order_items (
   CONSTRAINT has_position EXPECT (source.lsn IS NOT NULL),
-  CONSTRAINT nothing_rescued EXPECT (_rescued_data IS NULL)
+  -- Auto Loader leaves an empty {} for a struct even when every field parsed;
+  -- only a key with actual content means Debezium sent something unexpected.
+  CONSTRAINT nothing_rescued EXPECT (
+    _rescued_data IS NULL OR size(filter(json_object_keys(_rescued_data),
+      k -> k <> '_file_path' AND get_json_object(_rescued_data, concat('$.', k)) <> '{}')) = 0
+  )
 )
 COMMENT 'Change events for shop.order_items, as captured by Debezium.'
 AS SELECT *, _metadata.file_path AS source_file, _metadata.file_modification_time AS landed_at
@@ -55,7 +65,12 @@ FROM STREAM read_files(
 
 CREATE OR REFRESH STREAMING TABLE bronze.customers (
   CONSTRAINT has_position EXPECT (source.lsn IS NOT NULL),
-  CONSTRAINT nothing_rescued EXPECT (_rescued_data IS NULL)
+  -- Auto Loader leaves an empty {} for a struct even when every field parsed;
+  -- only a key with actual content means Debezium sent something unexpected.
+  CONSTRAINT nothing_rescued EXPECT (
+    _rescued_data IS NULL OR size(filter(json_object_keys(_rescued_data),
+      k -> k <> '_file_path' AND get_json_object(_rescued_data, concat('$.', k)) <> '{}')) = 0
+  )
 )
 COMMENT 'Change events for shop.customers, as captured by Debezium.'
 AS SELECT *, _metadata.file_path AS source_file, _metadata.file_modification_time AS landed_at
@@ -77,7 +92,12 @@ FROM STREAM read_files(
 
 CREATE OR REFRESH STREAMING TABLE bronze.products (
   CONSTRAINT has_position EXPECT (source.lsn IS NOT NULL),
-  CONSTRAINT nothing_rescued EXPECT (_rescued_data IS NULL)
+  -- Auto Loader leaves an empty {} for a struct even when every field parsed;
+  -- only a key with actual content means Debezium sent something unexpected.
+  CONSTRAINT nothing_rescued EXPECT (
+    _rescued_data IS NULL OR size(filter(json_object_keys(_rescued_data),
+      k -> k <> '_file_path' AND get_json_object(_rescued_data, concat('$.', k)) <> '{}')) = 0
+  )
 )
 COMMENT 'Change events for shop.products, as captured by Debezium.'
 AS SELECT *, _metadata.file_path AS source_file, _metadata.file_modification_time AS landed_at
@@ -99,7 +119,12 @@ FROM STREAM read_files(
 
 CREATE OR REFRESH STREAMING TABLE bronze.warehouses (
   CONSTRAINT has_position EXPECT (source.lsn IS NOT NULL),
-  CONSTRAINT nothing_rescued EXPECT (_rescued_data IS NULL)
+  -- Auto Loader leaves an empty {} for a struct even when every field parsed;
+  -- only a key with actual content means Debezium sent something unexpected.
+  CONSTRAINT nothing_rescued EXPECT (
+    _rescued_data IS NULL OR size(filter(json_object_keys(_rescued_data),
+      k -> k <> '_file_path' AND get_json_object(_rescued_data, concat('$.', k)) <> '{}')) = 0
+  )
 )
 COMMENT 'Change events for shop.warehouses, as captured by Debezium.'
 AS SELECT *, _metadata.file_path AS source_file, _metadata.file_modification_time AS landed_at
