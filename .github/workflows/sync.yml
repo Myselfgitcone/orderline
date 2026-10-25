@@ -42,3 +42,14 @@ jobs:
           uv run orderline setup
           uv run orderline tick
           uv run orderline sync
+
+      # Then rebuild silver and gold from the new batch.
+      - uses: databricks/setup-cli@main
+        if: steps.secrets.outputs.ready == '1'
+      - name: Refresh the pipeline
+        if: steps.secrets.outputs.ready == '1'
+        working-directory: databricks
+        env:
+          DATABRICKS_HOST: https://${{ secrets.ORDERLINE_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
+        run: databricks bundle run refresh

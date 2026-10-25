@@ -1,0 +1,29 @@
+name: deploy
+
+# Ship the Databricks bundle (schemas, pipeline, refresh job) when it changes on main.
+on:
+  push:
+    branches: [main]
+    paths: ["databricks/**", ".github/workflows/deploy.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: https://${{ secrets.ORDERLINE_DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
+    defaults:
+      run:
+        working-directory: databricks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate
+      - run: databricks bundle deploy
+      # Build everything from what's already in the volume.
+      - run: databricks bundle run refresh
