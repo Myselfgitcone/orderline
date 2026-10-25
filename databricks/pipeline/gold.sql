@@ -1,18 +1,28 @@
 -- Gold: what the business and the model read.
 
 -- Each customer version with the business-time window it was true for, so an
--- order joins to the customer as they were when it was placed.
--- Each version also knows which warehouse is nearest to that address.
+-- order joins to the customer as they were when it was placed. Each version also
+-- knows which warehouse is nearest to that address.
+--
+-- Versions are ordered by LSN (commit order), and a version starts at the latest
+-- updated_at seen so far rather than its own. If the source's clock ever goes
+-- backwards between commits (it did once in the first backfill), the windows
+-- still can't overlap, so no order joins two versions of its customer.
 CREATE TEMPORARY VIEW customer_versions AS
-WITH versions AS (
+WITH stamped AS (
   SELECT
-    customer_id, email, city, state, lat, lon, segment,
-    updated_at AS valid_from,
+    *,
+    max(updated_at) OVER (PARTITION BY customer_id ORDER BY __START_AT ROWS UNBOUNDED PRECEDING) AS valid_from
+  FROM silver.customers_history
+),
+versions AS (
+  SELECT
+    customer_id, email, city, state, lat, lon, segment, valid_from,
     coalesce(
-      lead(updated_at) OVER (PARTITION BY customer_id ORDER BY __START_AT),
+      lead(valid_from) OVER (PARTITION BY customer_id ORDER BY __START_AT),
       TIMESTAMP'9999-12-31'
     ) AS valid_to
-  FROM silver.customers_history
+  FROM stamped
 )
 SELECT
   v.customer_id, v.email, v.city, v.state, v.lat, v.lon, v.segment, v.valid_from, v.valid_to,

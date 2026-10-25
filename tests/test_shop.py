@@ -167,3 +167,63 @@ def test_the_slot_sees_inserts_updates_and_deletes_but_not_the_simulator(shop):
         (name,),
     ).fetchone()[0]
     assert relations == 0
+
+
+@pytest.mark.postgres
+def test_updated_at_never_goes_backwards(shop):
+    """Downstream orders customer versions by commit; their clocks must agree."""
+    conn, _ = shop
+    with conn.transaction():
+        conn.execute(
+            """
+            create table sim.clock_regressions (tbl text, old_at timestamptz, new_at timestamptz);
+            create function sim.check_clock() returns trigger language plpgsql as $$
+            begin
+                if new.updated_at < old.updated_at then
+                    insert into sim.clock_regressions values (tg_table_name, old.updated_at, new.updated_at);
+                end if;
+                return new;
+            end $$;
+            create trigger customers_clock before update on shop.customers
+                for each row execute function sim.check_clock();
+            create trigger products_clock before update on shop.products
+                for each row execute function sim.check_clock();
+            create trigger orders_clock before update on shop.orders
+                for each row execute function sim.check_clock();
+            """
+        )
+    simulate.run(conn, UNTIL, knobs=simulate.Knobs(orders_per_day=300, backfill_days=10))
+    assert conn.execute("select * from sim.clock_regressions").fetchall() == []
+
+
+class Always:
+    """A random source that takes every branch: random() is 0, choices pick the first."""
+
+    def __init__(self, seed=0):
+        self.real = __import__("random").Random(seed)
+
+    def random(self):
+        return 0.0
+
+    def choice(self, seq):
+        return seq[0]
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+@pytest.mark.postgres
+def test_churn_is_stamped_after_everything_else_in_its_hour(shop):
+    conn, _ = shop
+    simulate.run(conn, UNTIL, knobs=simulate.Knobs(backfill_days=1))
+    sim = simulate.Shop(conn, seed=7, knobs=simulate.Knobs())
+    sim.load()
+    hour = UNTIL
+    writes = []
+    with conn.transaction():
+        sim._churn(hour, Always(), writes)
+        launched = conn.execute("select max(updated_at) from shop.products").fetchone()[0]
+    stamps = [p for _, params in writes for p in params if isinstance(p, datetime)]
+    assert len(writes) == 4  # move, email, price, retire; the launch inserts directly
+    assert set(stamps) == {hour + timedelta(hours=1) - timedelta(microseconds=1)}
+    assert launched == hour + timedelta(hours=1) - timedelta(microseconds=1)
