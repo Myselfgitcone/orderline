@@ -1,4 +1,4 @@
-"""Score every open order with the champion model.
+"""Score every open order that can still arrive on time, with the champion model.
 
 `ml.late_risk` holds the latest score per open order; `ml.late_risk_history`
 keeps every score ever given, so predictions can later be checked against what
@@ -24,7 +24,13 @@ from mlflow.tracking import MlflowClient
 import common
 import late_model
 
-OPEN = "status IN ('paid', 'packed', 'shipped')"
+# Open orders that can still arrive on time. Ones already past their promise date
+# are late whatever the model says, so scoring them would only flatter it.
+TODAY = "to_date(from_utc_timestamp(max(placed_at), 'America/New_York'))"
+OPEN = (
+    "status IN ('paid', 'packed', 'shipped') "
+    "AND promised_on >= (SELECT {today} FROM {catalog}.gold.order_facts)"
+)
 
 
 def main() -> None:
@@ -40,7 +46,7 @@ def main() -> None:
         return
     model = mlflow.sklearn.load_model(f"models:/{name}@champion")
 
-    orders = common.read_facts(session, args.catalog, OPEN)
+    orders = common.read_facts(session, args.catalog, OPEN.format(today=TODAY, catalog=args.catalog))
     if orders.empty:
         print("No open orders.")
         return

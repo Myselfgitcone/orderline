@@ -195,8 +195,10 @@ function model(data) {
 function risky(data) {
   const bands = Object.fromEntries(data.bands.map((b) => [b.risk_band, b.orders]));
   $("risky-sub").textContent =
-    `Scored by the champion after the latest sync: ${int(bands.high ?? 0)} high, ${int(bands.medium ?? 0)} medium and ` +
-    `${int(bands.low ?? 0)} low risk. Look at why the top ones are up there: far, heavy, Parcelo, or a busy warehouse.`;
+    `Open orders that can still make their promise date, scored by the champion after the latest sync: ` +
+    `${int(bands.high ?? 0)} high, ${int(bands.medium ?? 0)} medium and ${int(bands.low ?? 0)} low risk. ` +
+    `Another ${int(data.summary.overdue_orders ?? 0)} are already past it, so they aren't scored. ` +
+    `Look at why the top ones are up there: far, heavy, Parcelo, or a busy warehouse.`;
   table("risky", [["Order"], ["Risk", "r"], [""], ["Carrier"], ["From"], ["Km", "r"], ["Kg", "r hide-sm"], ["Load", "r hide-sm"], ["Promised", "hide-sm"], ["Status", "hide-sm"]],
     data.risky.map((r) => el("tr", {}, cell(`#${r.order_id}`, "num"), cell(pct(r.p_late), "r num"),
       cell(el("span", { className: `pill ${r.risk_band}`, textContent: r.risk_band })),

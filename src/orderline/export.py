@@ -101,6 +101,10 @@ def _typed(value: str | None, type_name: str) -> Any:
 def queries(catalog: str) -> dict[str, str]:
     c = catalog
     recent = "placed_at >= current_date() - INTERVAL 30 DAYS"
+    # "Today" as far as the data knows: the shop day of the newest order.
+    today = (
+        f"(SELECT to_date(from_utc_timestamp(max(placed_at), 'America/New_York')) FROM {c}.gold.order_facts)"
+    )
     return {
         "summary": f"""
             SELECT
@@ -114,7 +118,9 @@ def queries(catalog: str) -> dict[str, str]:
                 WHERE delivered_at >= current_date() - INTERVAL 30 DAYS) AS late_share_30d,
               (SELECT round(avg(lead_days), 2) FROM {c}.gold.order_facts
                 WHERE delivered_at >= current_date() - INTERVAL 30 DAYS) AS lead_days_30d,
-              (SELECT max(scored_at) FROM {c}.ml.late_risk) AS scored_at
+              (SELECT max(scored_at) FROM {c}.ml.late_risk) AS scored_at,
+              (SELECT count_if(status IN ('paid', 'packed', 'shipped') AND promised_on < {today})
+                FROM {c}.gold.order_facts) AS overdue_orders
         """,
         "daily": f"""
             SELECT day, sum(orders) AS orders, round(sum(revenue_usd), 0) AS revenue_usd,
@@ -159,16 +165,20 @@ def queries(catalog: str) -> dict[str, str]:
                    test_orders, checks_passed, checks, importances, promoted, test_from
             FROM {c}.ml.training_runs ORDER BY trained_at DESC LIMIT 8
         """,
-        # Each order's first score against what then happened, once the promise date has passed.
+        # Each order's first score against what then happened. Only scores given while the
+        # order could still make it count, and only once its promise date has passed.
         "track_record": f"""
             WITH first_score AS (
-              SELECT order_id, min_by(p_late, scored_at) AS p, min_by(risk_band, scored_at) AS band
+              SELECT order_id, min(scored_at) AS scored_at,
+                     min_by(p_late, scored_at) AS p, min_by(risk_band, scored_at) AS band
               FROM {c}.ml.late_risk_history GROUP BY order_id
             )
             SELECT s.band AS risk_band, count(*) AS orders, round(avg(s.p), 3) AS predicted,
                    round(avg(coalesce(f.is_late, true)::INT), 3) AS actual
             FROM first_score s JOIN {c}.gold.order_facts f USING (order_id)
-            WHERE f.cancelled_at IS NULL AND f.promised_on < current_date()
+            WHERE f.cancelled_at IS NULL
+              AND to_date(from_utc_timestamp(s.scored_at, 'America/New_York')) <= f.promised_on
+              AND f.promised_on < {today}
             GROUP BY s.band
         """,
     }
