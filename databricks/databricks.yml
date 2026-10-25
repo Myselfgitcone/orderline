@@ -32,6 +32,10 @@ resources:
       catalog_name: ${var.catalog}
       name: gold
       comment: Order facts, daily delivery numbers and capture health.
+    ml:
+      catalog_name: ${var.catalog}
+      name: ml
+      comment: The late-delivery model, its training runs and its scores.
 
   pipelines:
     orderline:
@@ -50,10 +54,46 @@ resources:
         orderline.volume: ${var.volume}
 
   jobs:
+    # After every sync: rebuild silver and gold, then re-score open orders.
     refresh:
       name: orderline-refresh
       max_concurrent_runs: 1
+      environments: &ml_environment
+        - environment_key: ml
+          spec:
+            environment_version: "3"
+            dependencies:
+              - mlflow>=3.1,<4
+              - pandas>=2.2
+              - scikit-learn>=1.6,<2
       tasks:
         - task_key: pipeline
           pipeline_task:
             pipeline_id: ${resources.pipelines.orderline.id}
+        - task_key: score
+          depends_on: [{task_key: pipeline}]
+          environment_key: ml
+          spark_python_task:
+            python_file: ./ml/score.py
+            parameters: ["--catalog", "${var.catalog}"]
+
+    # Weekly: retrain on everything known so far, promote if it earns it, re-score.
+    train:
+      name: orderline-train
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 30 6 ? * MON"
+        timezone_id: America/Chicago
+      environments: *ml_environment
+      tasks:
+        - task_key: train
+          environment_key: ml
+          spark_python_task:
+            python_file: ./ml/train.py
+            parameters: ["--catalog", "${var.catalog}"]
+        - task_key: score
+          depends_on: [{task_key: train}]
+          environment_key: ml
+          spark_python_task:
+            python_file: ./ml/score.py
+            parameters: ["--catalog", "${var.catalog}"]

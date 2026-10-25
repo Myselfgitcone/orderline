@@ -18,6 +18,12 @@ dependencies = [
 orderline = "orderline.cli:app"
 
 [dependency-groups]
+# The late-delivery model. Databricks installs these itself; locally they're for tests.
+ml = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.6",
+]
 dev = [
     "httpx2>=0.1",  # starlette's TestClient
     "pytest>=8.3",
@@ -39,9 +45,16 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["SIM905"]  # word lists read better as one split string
 
+[tool.ruff.lint.isort]
+known-first-party = ["orderline", "late_model", "common"]  # the last two live in databricks/ml
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument"]
 
+[tool.uv]
+default-groups = ["dev", "ml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["databricks/ml"]
 markers = ["postgres: needs ORDERLINE_TEST_DSN pointing at a scratch Postgres"]

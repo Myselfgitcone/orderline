@@ -25,5 +25,6 @@ jobs:
       - uses: databricks/setup-cli@main
       - run: databricks bundle validate
       - run: databricks bundle deploy
-      # Build everything from what's already in the volume.
+      # Build everything from what's already in the volume, then (re)train on it.
       - run: databricks bundle run refresh
+      - run: databricks bundle run train

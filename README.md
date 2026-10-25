@@ -3,7 +3,7 @@
 Change data capture from a live order database into Databricks, with a
 late-delivery model trained on the result.
 
-Work in progress. Done so far: the shop, capture into Databricks, and the pipeline.
+Done so far: the shop, capture into Databricks, the pipeline, and the late-delivery model.
 
 ## The shop
 
@@ -129,6 +129,46 @@ join in gold.
 After every sync, the workflow runs the bundle's `orderline-refresh` job. CI
 validates the bundle against the workspace on every PR, and merging to `main`
 deploys it.
+
+## The late-delivery model
+
+Will this order arrive late? Predicted at checkout, from what's known then: carrier,
+method, warehouse and its backlog, distance to the customer, weight, basket, and
+when the order was placed. Gradient-boosted trees in scikit-learn
+(`databricks/ml/late_model.py`), plain pandas in and out, so the same code
+trains in Databricks and in the tests.
+
+**Labels without censoring.** An order placed yesterday that hasn't arrived isn't
+on time, it's unknown. Only orders whose promise date has passed are used; by
+then the outcome is known even if the parcel is still out (still out = late).
+
+**Graded on the future.** Train on everything up to two weeks ago, test on the
+last two weeks. Never shuffled.
+
+**Checked against the truth.** The simulator planted the causes, so besides
+scoring well the model has to rank them right. Each is checked by asking the
+model what it would predict for the same orders with one thing changed:
+
+On the local 60-day shop (test: 1,595 orders, 16.8% late):
+
+| | |
+| --- | --- |
+| AUC | 0.909, vs 0.634 for late rates by carrier and method |
+| Carrier | Parcelo 0.21 > Northpost 0.11 > Swiftline 0.05 |
+| Distance | 300 km 0.09, 3,000 km 0.60 |
+| Warehouse load | 0.6 of capacity 0.17, 1.8 of capacity 0.48 |
+| Weight | 2 kg 0.10, 15 kg 0.28 |
+
+**Champion and challenger.** Every training run is logged to MLflow and registered
+in Unity Catalog as `orderline.ml.late_delivery`. The `champion` alias moves only
+if the new version passes all four checks and matches or beats the current
+champion, re-scored on the same latest test orders.
+
+**Jobs.** `orderline-train` runs every Monday at 6:30 Chicago time: train, maybe
+promote, re-score. After every sync, `orderline-refresh` rebuilds the pipeline and
+scores open orders with the champion into `ml.late_risk`. Every score also goes
+to `ml.late_risk_history`, so predictions can be checked later against what
+actually happened. `ml.training_runs` has one row per training run.
 
 ## Tests
 
