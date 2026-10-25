@@ -1,0 +1,43 @@
+name: site
+
+# The public page: pull the numbers out of Databricks and publish to GitHub Pages.
+# Runs after every sync (called from sync.yml), when the page itself changes, or by hand.
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/**", "src/orderline/export.py", ".github/workflows/site.yml"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      ORDERLINE_DATABRICKS_HOST: ${{ secrets.ORDERLINE_DATABRICKS_HOST }}
+      ORDERLINE_DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --no-default-groups
+      - name: Export the numbers
+        run: uv run orderline export-site --out site/data/site.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

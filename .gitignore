@@ -8,3 +8,4 @@ dist/
 /out/
 /.orderline/
 .databricks/
+site/data/

@@ -53,3 +53,13 @@ jobs:
           DATABRICKS_HOST: https://${{ secrets.ORDERLINE_DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
         run: databricks bundle run refresh
+
+  # Republish the public page with the new numbers.
+  site:
+    needs: sync
+    uses: ./.github/workflows/site.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

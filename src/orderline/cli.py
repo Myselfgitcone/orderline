@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 
 from orderline import db, simulate
+from orderline import export as exporting
 from orderline import sync as syncing
 from orderline import verify as verifying
 from orderline.settings import Settings
@@ -77,6 +78,23 @@ def verify(
         typer.echo(f"  {example}")
     if not check.ok or (check.duplicates and not allow_duplicates):
         raise typer.Exit(1)
+
+
+@app.command("export-site")
+def export_site(
+    out: Path = typer.Option(Path("site/data/site.json"), help="Where to write the page's data."),
+) -> None:
+    """Pull the public page's numbers out of Databricks into one JSON file."""
+    settings = Settings()
+    if not (settings.databricks_host and settings.databricks_token):
+        raise typer.BadParameter("set ORDERLINE_DATABRICKS_HOST and ORDERLINE_DATABRICKS_TOKEN")
+    warehouse = exporting.SqlWarehouse(settings.databricks_host, settings.databricks_token.get_secret_value())
+    data = exporting.export(warehouse, settings.catalog, out)
+    summary = data["summary"]
+    typer.echo(
+        f"Wrote {out}: {summary.get('orders')} orders, {len(data['daily'])} days, "
+        f"{len(data['risky'])} risky open orders, {len(data['runs'])} training runs."
+    )
 
 
 if __name__ == "__main__":

@@ -24,3 +24,4 @@ class Settings(BaseSettings):
     databricks_host: str = ""
     databricks_token: SecretStr = SecretStr("")
     volume: str = "/Volumes/orderline/raw/cdc"
+    catalog: str = "orderline"
