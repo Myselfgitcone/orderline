@@ -1,5 +1,7 @@
 # Orderline
 
+**Live page: https://myselfgitcone.github.io/orderline/**
+
 Change data capture from a live order database into Databricks, with a
 late-delivery model trained on the result.
 
@@ -169,6 +171,19 @@ promote, re-score. After every sync, `orderline-refresh` rebuilds the pipeline a
 scores open orders with the champion into `ml.late_risk`. Every score also goes
 to `ml.late_risk_history`, so predictions can be checked later against what
 actually happened. `ml.training_runs` has one row per training run.
+
+## The public page
+
+`site/` is a static page on GitHub Pages. After every sync, `orderline export-site`
+asks the workspace's SQL warehouse for the page's numbers through the Statement
+Execution API and writes them to one JSON file. It finds the warehouse on its own
+and uses the credentials the sync already has. The page shows:
+
+- the daily late share, with the last few days shaded because their orders haven't had time to be late
+- late share by carrier and by warehouse, with backlog and overflow
+- the champion model's checks, what it leans on, and its track record on scored orders once their promise dates pass
+- the riskiest open orders right now
+- the last syncs: events by type and minutes from commit to landing
 
 ## Tests
 
