@@ -1,0 +1,59 @@
+# Databricks Asset Bundle: the pipeline, the schemas it writes to, and the job
+# that refreshes it after each sync. Deployed from GitHub Actions on merge.
+bundle:
+  name: orderline
+
+variables:
+  catalog:
+    description: Unity Catalog catalog that holds everything Orderline builds.
+    default: orderline
+  volume:
+    description: Where the sync job uploads Debezium batches.
+    default: /Volumes/orderline/raw/cdc
+
+targets:
+  prod:
+    default: true
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+resources:
+  schemas:
+    bronze:
+      catalog_name: ${var.catalog}
+      name: bronze
+      comment: Debezium change events exactly as captured.
+    silver:
+      catalog_name: ${var.catalog}
+      name: silver
+      comment: The shop's tables rebuilt from their change events.
+    gold:
+      catalog_name: ${var.catalog}
+      name: gold
+      comment: Order facts, daily delivery numbers and capture health.
+
+  pipelines:
+    orderline:
+      name: orderline
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.silver.name}
+      serverless: true
+      continuous: false
+      photon: true
+      channel: CURRENT
+      root_path: ./pipeline
+      libraries:
+        - glob:
+            include: ./pipeline/**
+      configuration:
+        orderline.volume: ${var.volume}
+
+  jobs:
+    refresh:
+      name: orderline-refresh
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.orderline.id}

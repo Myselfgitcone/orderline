@@ -58,3 +58,15 @@ jobs:
         run: uv run orderline sync --no-upload --timeout 300
       # Both batches together must rebuild the tables, with nothing sent twice.
       - run: uv run orderline verify --no-allow-duplicates
+
+  # The Databricks side: the bundle must validate against the real workspace.
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: https://${{ secrets.ORDERLINE_DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle validate
+        working-directory: databricks

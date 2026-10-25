@@ -3,7 +3,7 @@
 Change data capture from a live order database into Databricks, with a
 late-delivery model trained on the result.
 
-Work in progress. Done so far: the shop, and capture into Databricks.
+Work in progress. Done so far: the shop, capture into Databricks, and the pipeline.
 
 ## The shop
 
@@ -103,6 +103,32 @@ each source table row for row. CI runs the whole path twice against Postgres 17
 with real Debezium, then verifies both batches together with
 `--no-allow-duplicates`, which proves the second sync started exactly where the
 first one stopped.
+
+## In Databricks
+
+A Lakeflow declarative pipeline, deployed as an asset bundle (`databricks/`):
+
+| Layer | Tables | What it is |
+| --- | --- | --- |
+| bronze | `orders`, `order_items`, `customers`, `products`, `warehouses` | Debezium events as captured, loaded by Auto Loader from the volume |
+| silver | `orders`, `order_items`, `warehouses` | Current state, rebuilt with `AUTO CDC ... SEQUENCE BY lsn` (SCD type 1); deletes are real deletes |
+| silver | `customers_history`, `products_history` | Every version (SCD type 2), history tracked only on columns that matter |
+| gold | `order_facts` | One row per order: what was known at checkout, joined to the customer *as they were then*, plus how delivery went |
+| gold | `daily_delivery` | Per day, warehouse and carrier: orders, revenue, late share |
+| gold | `capture_health` | Per sync: events by table and op, and minutes from commit in Postgres to landing in Databricks |
+
+Bronze declares Debezium's whole envelope rather than inferring it: the JSON has
+no types, so inference would guess. Dates arrive as days since 1970, timestamps as
+ISO strings, and anything unexpected goes to `_rescued_data`, which an expectation
+watches.
+
+Sequencing by LSN, not by `updated_at`, is what makes replays safe: a batch sent
+twice or late lands in commit order. Business time is still there for the as-of
+join in gold.
+
+After every sync, the workflow runs the bundle's `orderline-refresh` job. CI
+validates the bundle against the workspace on every PR, and merging to `main`
+deploys it.
 
 ## Tests
 
