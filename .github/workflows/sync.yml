@@ -16,6 +16,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      refreshed: ${{ steps.record.outputs.refreshed }}
     env:
       ORDERLINE_DATABASE_URL: ${{ secrets.ORDERLINE_DATABASE_URL }}
       ORDERLINE_DATABRICKS_HOST: ${{ secrets.ORDERLINE_DATABRICKS_HOST }}
@@ -47,16 +52,58 @@ jobs:
       - uses: databricks/setup-cli@main
         if: steps.secrets.outputs.ready == '1'
       - name: Refresh the pipeline
+        id: refresh
         if: steps.secrets.outputs.ready == '1'
+        continue-on-error: true
         working-directory: databricks
         env:
           DATABRICKS_HOST: https://${{ secrets.ORDERLINE_DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
-        run: databricks bundle run refresh
+        run: |
+          set -o pipefail
+          databricks bundle run refresh 2>&1 | tee "$RUNNER_TEMP/refresh.log"
 
-  # Republish the public page with the new numbers.
+      # Databricks Free Edition sometimes disables job triggers for a while
+      # ("Triggering new runs for organization ... is currently disabled").
+      # The capture above has already landed in the volume, so a failed refresh
+      # is not worth a red run and an email four times a day. Instead: a warning
+      # on the run, one open issue as the record (reused, never duplicated), and
+      # no page rebuild, since the gold tables did not change. The issue closes
+      # itself on the next refresh that works.
+      - name: Record the refresh result
+        id: record
+        if: steps.secrets.outputs.ready == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OUTCOME: ${{ steps.refresh.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Databricks pipeline refresh is failing"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -n "$open" ]; then
+              gh issue close "$open" --comment "The refresh succeeded again in $RUN_URL. Closing."
+            fi
+            echo "refreshed=1" >> "$GITHUB_OUTPUT"
+          else
+            tail="$(tail -n 5 "$RUNNER_TEMP/refresh.log" 2>/dev/null || echo "(no log)")"
+            echo "::warning title=Pipeline not refreshed::The capture landed, but 'databricks bundle run refresh' failed, so the page was not republished. See the open issue."
+            if [ -z "$open" ]; then
+              gh issue create --title "$title" --body "$(printf '%s\n\n%s\n\n```\n%s\n```\n\n%s' \
+                "The sync captured changes and uploaded them, but the Lakeflow refresh job could not start. The public page keeps its last good numbers until this clears." \
+                "First seen in $RUN_URL. Later runs with the same failure add nothing here; this issue closes itself when a refresh succeeds." \
+                "$tail" \
+                "If the message is about triggering being disabled for the organization, that is a Databricks-side restriction on the Free Edition workspace: log in, check the banner, and try running the orderline-refresh job by hand.")"
+            fi
+            echo "refreshed=0" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Republish the public page with the new numbers. Skipped when the pipeline
+  # did not refresh: the numbers would be the same as last time.
   site:
     needs: sync
+    if: needs.sync.outputs.refreshed == '1'
     uses: ./.github/workflows/site.yml
     secrets: inherit
     permissions:
