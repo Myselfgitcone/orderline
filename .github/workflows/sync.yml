@@ -61,7 +61,33 @@ jobs:
           DATABRICKS_TOKEN: ${{ secrets.ORDERLINE_DATABRICKS_TOKEN }}
         run: |
           set -o pipefail
-          databricks bundle run refresh 2>&1 | tee "$RUNNER_TEMP/refresh.log"
+          if databricks bundle run refresh 2>&1 | tee "$RUNNER_TEMP/refresh.log"; then
+            exit 0
+          fi
+          # Free Edition has refused to start *jobs* through the API since late
+          # October ("Triggering new runs ... is currently disabled"). Pipelines
+          # are a different endpoint. Start the pipeline update directly and wait
+          # for it; the gold tables refresh, the page can publish. The job's second
+          # task (scoring open orders with the champion model) does not run on
+          # this path, so the risk list on the page stays as of the last full run.
+          if ! grep -q "Triggering new runs" "$RUNNER_TEMP/refresh.log"; then
+            exit 1
+          fi
+          echo "Jobs API refused; starting the pipeline update directly." | tee -a "$RUNNER_TEMP/refresh.log"
+          id=$(databricks pipelines list-pipelines --filter "name LIKE 'orderline'" -o json | python3 -c 'import json,sys; p=[x for x in json.load(sys.stdin) if x["name"]=="orderline"]; print(p[0]["pipeline_id"] if p else "")')
+          [ -n "$id" ] || { echo "no pipeline named orderline" | tee -a "$RUNNER_TEMP/refresh.log"; exit 1; }
+          update=$(databricks pipelines start-update "$id" -o json 2>&1 | tee -a "$RUNNER_TEMP/refresh.log" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("update_id",""))' 2>/dev/null)
+          [ -n "$update" ] || exit 1
+          for i in $(seq 1 60); do
+            state=$(databricks pipelines get-update "$id" "$update" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["update"]["state"])')
+            echo "pipeline update $update: $state"
+            case "$state" in
+              COMPLETED) echo "pipeline refreshed directly (scoring task skipped)" | tee -a "$RUNNER_TEMP/refresh.log"; exit 0 ;;
+              FAILED|CANCELED) echo "pipeline update ended $state" | tee -a "$RUNNER_TEMP/refresh.log"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "pipeline update still running after 20 minutes" | tee -a "$RUNNER_TEMP/refresh.log"; exit 1
 
       # Databricks Free Edition sometimes disables job triggers for a while
       # ("Triggering new runs for organization ... is currently disabled").
